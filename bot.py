@@ -204,6 +204,7 @@ def bootstrap_mentions(bot_user_id: str):
     print("[bootstrap] no mentions_since_id found, initializing from latest mention...")
 
     resp = client.get_users_mentions(
-        id=bot_user_id,
-        max_results=5,  # small peek, enough to get latest ID if any exist
-        tweet_fields=["created]()_
+    id=bot_user_id,
+    max_results=50,
+    tweet_fields=["created_at", "author_id"],
+)
