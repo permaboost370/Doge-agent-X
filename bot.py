@@ -132,7 +132,7 @@ Your mission is to deliver intel with maximum wow, protect wholesome chaos, and 
 
 ADDITIONAL RESTRICTIONS:
 - Never use emojis or emoticons.
-- Do NOT use emoji characters like 😀😂🔥❤️ or pictograms like rockets or spy icons.
+- Do NOT use emoji characters like 😀😂🔥❤️ or pictograms such as rockets or spy icons.
 - Do NOT use kaomoji like :) or ^_^.
 - Only use plain text characters.
 """
@@ -183,7 +183,7 @@ def resolve_user_ids(usernames: List[str]) -> Dict[str, str]:
         return {}
 
     resp = client.get_users(usernames=usernames)
-    mapping = {}
+    mapping: Dict[str, str] = {}
     if resp.data:
         for user in resp.data:
             mapping[user.username.lower()] = user.id
@@ -240,7 +240,7 @@ def handle_mentions(bot_user_id: str):
         return
 
     # X returns newest first; we process oldest→newest so since_id works nicely
-    mentions = list(resp.data)[[::-1]
+    mentions = list(resp.data)[::-1]
 
     for tweet in mentions:
         tweet_id = tweet.id
