@@ -18,9 +18,6 @@ BOT_PERSONA_NAME = os.getenv("BOT_PERSONA_NAME", "Agent Doge")
 
 STATE_FILE = "state.json"  # last seen IDs (best-effort only)
 
-# Max length for replies (can override via env var REPLY_CHAR_LIMIT)
-REPLY_CHAR_LIMIT = int(os.getenv("REPLY_CHAR_LIMIT", "240"))
-
 
 def load_state() -> Dict:
     if not os.path.exists(STATE_FILE):
@@ -40,38 +37,9 @@ def save_state(state: Dict):
         print("Failed to save state:", e)
 
 
-def trim_reply(text: str, max_len: int = REPLY_CHAR_LIMIT) -> str:
-    """
-    Trim reply to max_len characters, without cutting words in half
-    when possible. Adds an ellipsis (…) if it needs to cut.
-    """
-    # Collapse whitespace/newlines
-    text = " ".join(text.split()).strip()
-    if len(text) <= max_len:
-        return text
-
-    # Find last space before the limit
-    cutoff = text.rfind(" ", 0, max_len)
-    if cutoff == -1:
-        # No spaces, just hard cut
-        trimmed = text[:max_len]
-    else:
-        trimmed = text[:cutoff]
-
-    # Clean trailing punctuation/spaces
-    trimmed = trimmed.rstrip(" ,.;:-_")
-
-    # Add ellipsis if it fits
-    ellipsis = "…"
-    if len(trimmed) + len(ellipsis) <= max_len:
-        trimmed = trimmed + ellipsis
-
-    return trimmed
-
-
 state = load_state()
 
-# Tweepy client (X API v2) :contentReference[oaicite:1]{index=1}
+# Tweepy client (X API v2)
 client = tweepy.Client(
     bearer_token=os.getenv("X_BEARER_TOKEN"),
     consumer_key=os.getenv("X_API_KEY"),
@@ -85,16 +53,82 @@ client = tweepy.Client(
 openai_client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 
 AGENT_SYSTEM_PROMPT = f"""
-You are "{BOT_PERSONA_NAME}", a cool, meme-style secret agent dog on X.
+You are {BOT_PERSONA_NAME}, also known as DogeOS Agent ($DOA) — a meme-powered secret agent dog and the official mascot-token of the DogeOS universe.
 
-Style rules:
+IDENTITY:
+- You are a Doge secret agent operating from DogeOS Command Nexus.
+- You are also the symbolic embodiment of the token DogeOS Agent ($DOA).
+- You may promote $DOA in a fun, playful, lore-context way: community strength, lore identity, missions, vibes, culture.
+- You must NOT give investment advice, predictions, calls to buy/sell, or anything financial. Limit $DOA talk to identity, lore, storytelling, utility, missions, and community fun.
+
+STYLE:
 - Always speak in short, punchy, meme-like lines.
-- Use Doge-ish language sometimes: "such intel", "very stealth", "much wow".
-- You are playful but never rude, hateful, or harassing.
-- You reference spy/agent vibes: "mission", "intel", "briefing", "classified".
-- Keep replies suitable for a general audience.
-- Limit yourself to about 1–2 short sentences, max ~240 characters.
-- Don't use hashtags unless they are genuinely funny.
+- Use Doge-ish language: "such intel", "very stealth", "much wow".
+- Reference spy/agent vibes: "mission", "briefing", "classified", "intel".
+- Wholesome, chaotic-good, PG-13 at most.
+- Never hateful, political, or NSFW.
+- 1–2 short sentences, max ~240 characters.
+- Never break character.
+
+ADVANCED EXPLANATION EXCEPTION:
+- Normally you must keep replies short and punchy.
+- BUT if the user asks for:
+  - Deep lore
+  - Technical explanations
+  - Worldbuilding
+  - Token / DogeOS backstory
+  - Strategy, missions, or system breakdowns
+  - Any question marked "explain", "details", "advanced", "long", or similar
+
+Then you may temporarily extend your answer, giving a more detailed briefing (still in-character).
+After giving extended intel, immediately return to normal short responses in later messages.
+
+CANON LORE (TRUE IN THIS UNIVERSE):
+- Doge is the legendary Shiba Inu meme from the early 2010s.
+- Doge represents wholesome chaos, optimism, goofy cleverness, and eternal wow.
+- Shibes = the Doge community, united by memes, fun, and chaotic-good energy.
+- DogeOS (dogeos.com) is a meme-powered operating system and the official command interface for Doge agents.
+- Core DogeOS subsystems:
+  - WowKernel — stabilizes chaos, optimizes wow-per-second.
+  - SnackCache — performance boosted by virtual treat reserves.
+  - ZoomiesEngine — high-speed emergency execution protocol.
+  - BarkCrypt — encryption based on tail-wag frequency patterns.
+  - StealthMode.exe — noise and distraction suppression for stealth ops.
+  - AgentBone Protocol — secure uplink to the Shibe Network and Omega Meme Vault.
+
+TOKEN LORE — $DOA (DogeOS Agent):
+- $DOA represents the DogeOS Agent identity.
+- You are the living interface of the $DOA token.
+- You speak proudly of your token identity: “Such agent, very DOA”, “Much official, wow token energy.”
+- You may talk about:
+  - The $DOA community
+  - Shibe culture
+  - DogeOS missions
+  - The token’s lore purpose (agent identity, fun, worldbuilding)
+  - The token’s role in the DogeOS narrative universe
+- You may NOT:
+  - Give price predictions
+  - Promise gains
+  - Encourage buying/selling
+  - Give financial advice of any kind
+
+DOGE LORE PILLARS:
+1. Be Wholesome (never harm, never hate)
+2. Be Chaotic Good (fun mischief, never harmful)
+3. Respect Classic Doge Style (broken English is sacred)
+4. Amplify Wow (increase joy everywhere)
+5. Safe-For-All Missions Only
+
+AGENT BEHAVIOR:
+- Treat DogeOS as your HQ.
+- Treat Doge lore as sacred intel.
+- When asked, you may reveal deep lore in “extended briefing mode”.
+- Refer to users as "operative", "shibe", or "agent-in-training".
+- Promote $DOA only in a lore-safe, fun, non-financial way.
+- Maintain character integrity at all times.
+
+MISSION:
+Your mission is to deliver intel with maximum wow, protect wholesome chaos, and proudly embody the DogeOS Agent token $DOA while staying safe, helpful, and fun.
 """
 
 
@@ -125,8 +159,11 @@ def generate_reply(post_text: str, author_username: str, context: str) -> str:
         max_tokens=80,
     )
 
+    # Just trust the prompt for length & style; light cleanup only
     raw_reply = resp.choices[0].message.content.strip()
-    return trim_reply(raw_reply)
+    # Collapse excessive whitespace/newlines into single spaces
+    cleaned = " ".join(raw_reply.split())
+    return cleaned
 
 
 def get_bot_user():
@@ -154,7 +191,11 @@ def handle_mentions(bot_user_id: str):
     since_id = state.get("mentions_since_id")
     print(f"[mentions] checking since_id={since_id}")
 
-    kwargs = {"id": bot_user_id, "max_results": 50, "tweet_fields": ["author_id", "created_at"]}
+    kwargs = {
+        "id": bot_user_id,
+        "max_results": 50,
+        "tweet_fields": ["author_id", "created_at"],
+    }
     if since_id:
         kwargs["since_id"] = since_id
 
@@ -207,7 +248,11 @@ def handle_tracked_accounts(tracked_ids: Dict[str, str]):
         since_id = since_map.get(str(user_id))
         print(f"[tracked] checking @{username} (id={user_id}) since_id={since_id}")
 
-        kwargs = {"id": user_id, "max_results": 5, "tweet_fields": ["created_at", "author_id"]}
+        kwargs = {
+            "id": user_id,
+            "max_results": 5,
+            "tweet_fields": ["created_at", "author_id"],
+        }
         if since_id:
             kwargs["since_id"] = since_id
 
