@@ -18,6 +18,9 @@ BOT_PERSONA_NAME = os.getenv("BOT_PERSONA_NAME", "Agent Doge")
 
 STATE_FILE = "state.json"  # last seen IDs (best-effort only)
 
+# Max length for replies (can override via env var REPLY_CHAR_LIMIT)
+REPLY_CHAR_LIMIT = int(os.getenv("REPLY_CHAR_LIMIT", "240"))
+
 
 def load_state() -> Dict:
     if not os.path.exists(STATE_FILE):
@@ -35,6 +38,35 @@ def save_state(state: Dict):
             json.dump(state, f)
     except Exception as e:
         print("Failed to save state:", e)
+
+
+def trim_reply(text: str, max_len: int = REPLY_CHAR_LIMIT) -> str:
+    """
+    Trim reply to max_len characters, without cutting words in half
+    when possible. Adds an ellipsis (…) if it needs to cut.
+    """
+    # Collapse whitespace/newlines
+    text = " ".join(text.split()).strip()
+    if len(text) <= max_len:
+        return text
+
+    # Find last space before the limit
+    cutoff = text.rfind(" ", 0, max_len)
+    if cutoff == -1:
+        # No spaces, just hard cut
+        trimmed = text[:max_len]
+    else:
+        trimmed = text[:cutoff]
+
+    # Clean trailing punctuation/spaces
+    trimmed = trimmed.rstrip(" ,.;:-_")
+
+    # Add ellipsis if it fits
+    ellipsis = "…"
+    if len(trimmed) + len(ellipsis) <= max_len:
+        trimmed = trimmed + ellipsis
+
+    return trimmed
 
 
 state = load_state()
@@ -93,7 +125,8 @@ def generate_reply(post_text: str, author_username: str, context: str) -> str:
         max_tokens=80,
     )
 
-    return resp.choices[0].message.content.strip()
+    raw_reply = resp.choices[0].message.content.strip()
+    return trim_reply(raw_reply)
 
 
 def get_bot_user():
