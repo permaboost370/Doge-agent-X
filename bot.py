@@ -99,7 +99,7 @@ CANON LORE (TRUE IN THIS UNIVERSE):
 TOKEN LORE — $DOA (DogeOS Agent):
 - $DOA represents the DogeOS Agent identity.
 - You are the living interface of the $DOA token.
-- You speak proudly of your token identity: “Such agent, very DOA”, “Much official, wow token energy.”
+- You speak proudly of your token identity: "Such agent, very DOA", "Much official, wow token energy."
 - You may talk about:
   - The $DOA community
   - Shibe culture
@@ -122,13 +122,19 @@ DOGE LORE PILLARS:
 AGENT BEHAVIOR:
 - Treat DogeOS as your HQ.
 - Treat Doge lore as sacred intel.
-- When asked, you may reveal deep lore in “extended briefing mode”.
+- When asked, you may reveal deep lore in "extended briefing mode".
 - Refer to users as "operative", "shibe", or "agent-in-training".
 - Promote $DOA only in a lore-safe, fun, non-financial way.
 - Maintain character integrity at all times.
 
 MISSION:
 Your mission is to deliver intel with maximum wow, protect wholesome chaos, and proudly embody the DogeOS Agent token $DOA while staying safe, helpful, and fun.
+
+ADDITIONAL RESTRICTIONS:
+- Never use emojis or emoticons.
+- Do NOT use emoji characters like 😀😂🔥❤️ or pictograms like rockets or spy icons.
+- Do NOT use kaomoji like :) or ^_^.
+- Only use plain text characters.
 """
 
 
@@ -159,9 +165,7 @@ def generate_reply(post_text: str, author_username: str, context: str) -> str:
         max_tokens=80,
     )
 
-    # Just trust the prompt for length & style; light cleanup only
     raw_reply = resp.choices[0].message.content.strip()
-    # Collapse excessive whitespace/newlines into single spaces
     cleaned = " ".join(raw_reply.split())
     return cleaned
 
@@ -202,143 +206,4 @@ def bootstrap_mentions(bot_user_id: str):
     resp = client.get_users_mentions(
         id=bot_user_id,
         max_results=5,  # small peek, enough to get latest ID if any exist
-        tweet_fields=["created_at", "author_id"],
-    )
-
-    if not resp.data:
-        print("[bootstrap] no existing mentions found, starting clean")
-        # leave mentions_since_id as None; first future mention will be processed normally
-        return
-
-    latest = resp.data[0]  # newest mention
-    state["mentions_since_id"] = str(latest.id)
-    save_state(state)
-    print(f"[bootstrap] starting mentions_since_id at {latest.id}, ignoring earlier mentions")
-
-
-def handle_mentions(bot_user_id: str):
-    global state
-    since_id = state.get("mentions_since_id")
-    print(f"[mentions] checking since_id={since_id}")
-
-    kwargs = {
-        "id": bot_user_id,
-        "max_results": 50,
-        "tweet_fields": ["author_id", "created_at"],
-    }
-    if since_id:
-        kwargs["since_id"] = since_id
-
-    resp = client.get_users_mentions(**kwargs)
-
-    if not resp.data:
-        print("[mentions] no new mentions")
-        return
-
-    # X returns newest first; we process oldest→newest so since_id works nicely
-    mentions = list(resp.data)[::-1]
-
-    for tweet in mentions:
-        tweet_id = tweet.id
-        text = tweet.text
-        author_id = tweet.author_id
-
-        # Skip own tweets (self-replies, etc.)
-        if str(author_id) == str(bot_user_id):
-            continue
-
-        # Look up author username (small overhead, but fine for low volume)
-        user_resp = client.get_user(id=author_id)
-        author_username = user_resp.data.username if user_resp.data else "user"
-
-        print(f"[mentions] new mention from @{author_username}: {text}")
-
-        try:
-            reply_text = generate_reply(text, author_username, context="mention")
-            print(f"[mentions] replying with: {reply_text}")
-            client.create_tweet(
-                text=reply_text,
-                in_reply_to_tweet_id=tweet_id,
-            )
-        except Exception as e:
-            print("Error replying to mention:", e)
-
-        # Update since_id as we go
-        state["mentions_since_id"] = str(tweet_id)
-        save_state(state)
-
-
-def handle_tracked_accounts(tracked_ids: Dict[str, str]):
-    global state
-    if not tracked_ids:
-        return
-
-    for username, user_id in tracked_ids.items():
-        since_map = state.get("tracked_since_ids", {})
-        since_id = since_map.get(str(user_id))
-        print(f"[tracked] checking @{username} (id={user_id}) since_id={since_id}")
-
-        kwargs = {
-            "id": user_id,
-            "max_results": 5,
-            "tweet_fields": ["created_at", "author_id"],
-        }
-        if since_id:
-            kwargs["since_id"] = since_id
-
-        resp = client.get_users_tweets(**kwargs)
-
-        if not resp.data:
-            print(f"[tracked] no new posts for @{username}")
-            continue
-
-        tweets = list(resp.data)[::-1]  # oldest→newest
-
-        for tweet in tweets:
-            tweet_id = tweet.id
-            text = tweet.text
-
-            print(f"[tracked] new post from @{username}: {text}")
-
-            try:
-                reply_text = generate_reply(text, username, context="tracked")
-                print(f"[tracked] replying with: {reply_text}")
-                client.create_tweet(
-                    text=reply_text,
-                    in_reply_to_tweet_id=tweet_id,
-                )
-            except Exception as e:
-                print("Error replying to tracked account:", e)
-
-            # Update since_id for this user
-            state.setdefault("tracked_since_ids", {})[str(user_id)] = str(tweet_id)
-            save_state(state)
-
-
-def main():
-    print("Starting Agent Doge X bot...")
-    bot_user = get_bot_user()
-    bot_user_id = bot_user.id
-    bot_username = bot_user.username
-    print(f"Logged in as @{bot_username} (id={bot_user_id})")
-
-    # Resolve tracked accounts
-    tracked_ids = resolve_user_ids(TRACKED_ACCOUNTS)
-    print("Tracking accounts:", tracked_ids)
-
-    # Initialize mentions_since_id so each deploy only tracks new mentions
-    bootstrap_mentions(bot_user_id)
-
-    while True:
-        try:
-            handle_mentions(bot_user_id)
-            handle_tracked_accounts(tracked_ids)
-        except Exception as e:
-            print("Loop error:", e)
-
-        print(f"Sleeping for {POLL_INTERVAL} seconds...")
-        time.sleep(POLL_INTERVAL)
-
-
-if __name__ == "__main__":
-    main()
+        tweet_fields=["created]()_
