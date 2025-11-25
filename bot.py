@@ -186,6 +186,36 @@ def resolve_user_ids(usernames: List[str]) -> Dict[str, str]:
     return mapping
 
 
+def bootstrap_mentions(bot_user_id: str):
+    """
+    On a fresh deploy (no mentions_since_id yet), initialize from the latest
+    existing mention so we do NOT reply to historical mentions again.
+    """
+    global state
+
+    if state.get("mentions_since_id"):
+        print("[bootstrap] mentions_since_id already set, skipping bootstrap")
+        return
+
+    print("[bootstrap] no mentions_since_id found, initializing from latest mention...")
+
+    resp = client.get_users_mentions(
+        id=bot_user_id,
+        max_results=5,  # small peek, enough to get latest ID if any exist
+        tweet_fields=["created_at", "author_id"],
+    )
+
+    if not resp.data:
+        print("[bootstrap] no existing mentions found, starting clean")
+        # leave mentions_since_id as None; first future mention will be processed normally
+        return
+
+    latest = resp.data[0]  # newest mention
+    state["mentions_since_id"] = str(latest.id)
+    save_state(state)
+    print(f"[bootstrap] starting mentions_since_id at {latest.id}, ignoring earlier mentions")
+
+
 def handle_mentions(bot_user_id: str):
     global state
     since_id = state.get("mentions_since_id")
@@ -295,6 +325,9 @@ def main():
     # Resolve tracked accounts
     tracked_ids = resolve_user_ids(TRACKED_ACCOUNTS)
     print("Tracking accounts:", tracked_ids)
+
+    # Initialize mentions_since_id so each deploy only tracks new mentions
+    bootstrap_mentions(bot_user_id)
 
     while True:
         try:
