@@ -9,6 +9,8 @@ from openai import OpenAI
 # ---------- Config & Clients ----------
 
 POLL_INTERVAL = int(os.getenv("POLL_INTERVAL_SECONDS", "20"))
+MENTIONS_MIN_DELAY = int(os.getenv("MENTIONS_MIN_DELAY_SECONDS", "900"))
+
 TRACKED_ACCOUNTS = [
     x.strip().lstrip("@")
     for x in os.getenv("TRACKED_ACCOUNTS", "").split(",")
@@ -46,14 +48,14 @@ client = tweepy.Client(
     consumer_secret=os.getenv("X_API_SECRET"),
     access_token=os.getenv("X_ACCESS_TOKEN"),
     access_token_secret=os.getenv("X_ACCESS_TOKEN_SECRET"),
-    wait_on_rate_limit=True,
+    wait_on_rate_limit=False,  # we will throttle ourselves
 )
 
 # OpenAI client
 openai_client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 
-AGENT_SYSTEM_PROMPT = f"""
-You are {BOT_PERSONA_NAME}, also known as DogeOS Agent ($DOA) — a meme-powered secret agent dog and the official mascot-token of the DogeOS universe.
+AGENT_SYSTEM_PROMPT = """
+You are {bot_name}, also known as DogeOS Agent ($DOA) — a meme-powered secret agent dog and the official mascot-token of the DogeOS universe.
 
 IDENTITY:
 - You are a Doge secret agent operating from DogeOS Command Nexus.
@@ -135,7 +137,11 @@ ADDITIONAL RESTRICTIONS:
 - Do NOT use emoji characters like 😀😂🔥❤️ or pictograms such as rockets or spy icons.
 - Do NOT use kaomoji like :) or ^_^.
 - Only use plain text characters.
-"""
+""".strip()
+
+
+def build_system_prompt() -> str:
+    return AGENT_SYSTEM_PROMPT.format(bot_name=BOT_PERSONA_NAME)
 
 
 def generate_reply(post_text: str, author_username: str, context: str) -> str:
@@ -158,7 +164,7 @@ def generate_reply(post_text: str, author_username: str, context: str) -> str:
     resp = openai_client.chat.completions.create(
         model="gpt-4.1-mini",
         messages=[
-            {"role": "system", "content": AGENT_SYSTEM_PROMPT},
+            {"role": "system", "content": build_system_prompt()},
             {"role": "user", "content": user_msg},
         ],
         temperature=0.9,
@@ -205,7 +211,7 @@ def bootstrap_mentions(bot_user_id: str):
 
     resp = client.get_users_mentions(
         id=bot_user_id,
-        max_results=5,  # small peek, enough to get latest ID if any exist
+        max_results=5,
         tweet_fields=["created_at", "author_id"],
     )
 
@@ -319,6 +325,26 @@ def handle_tracked_accounts(tracked_ids: Dict[str, str]):
             save_state(state)
 
 
+_last_mentions_check = 0.0
+
+
+def poll_mentions_throttled(bot_user_id: str):
+    """
+    Only call the mentions endpoint at most once per MENTIONS_MIN_DELAY seconds,
+    regardless of POLL_INTERVAL, to stay under strict rate limits.
+    """
+    global _last_mentions_check
+    now = time.time()
+    elapsed = now - _last_mentions_check
+    if _last_mentions_check != 0.0 and elapsed < MENTIONS_MIN_DELAY:
+        remaining = int(MENTIONS_MIN_DELAY - elapsed)
+        print(f"[mentions] skipping API call, {remaining}s until next allowed mentions check")
+        return
+
+    _last_mentions_check = now
+    handle_mentions(bot_user_id)
+
+
 def main():
     print("Starting Agent Doge X bot...")
     bot_user = get_bot_user()
@@ -335,7 +361,7 @@ def main():
 
     while True:
         try:
-            handle_mentions(bot_user_id)
+            poll_mentions_throttled(bot_user_id)
             handle_tracked_accounts(tracked_ids)
         except Exception as e:
             print("Loop error:", e)
