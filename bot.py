@@ -41,14 +41,14 @@ def save_state(state: Dict):
 
 state = load_state()
 
-# Tweepy client (X API v2)
+# Tweepy client (X API v2) – we handle rate limits ourselves
 client = tweepy.Client(
     bearer_token=os.getenv("X_BEARER_TOKEN"),
     consumer_key=os.getenv("X_API_KEY"),
     consumer_secret=os.getenv("X_API_SECRET"),
     access_token=os.getenv("X_ACCESS_TOKEN"),
     access_token_secret=os.getenv("X_ACCESS_TOKEN_SECRET"),
-    wait_on_rate_limit=False,  # we will throttle ourselves
+    wait_on_rate_limit=False,
 )
 
 # OpenAI client
@@ -279,6 +279,14 @@ def handle_mentions(bot_user_id: str):
 
 
 def handle_tracked_accounts(tracked_ids: Dict[str, str]):
+    """
+    Handle tweets from tracked accounts.
+
+    Bootstrap behavior:
+    - For each tracked account with no stored since_id, we fetch its latest tweet
+      and store that ID WITHOUT replying, so the bot only responds to tweets
+      made after it starts running.
+    """
     global state
     if not tracked_ids:
         return
@@ -288,13 +296,31 @@ def handle_tracked_accounts(tracked_ids: Dict[str, str]):
         since_id = since_map.get(str(user_id))
         print(f"[tracked] checking @{username} (id={user_id}) since_id={since_id}")
 
+        # Bootstrap: if we've never seen this user before, initialize since_id only
+        if since_id is None:
+            resp = client.get_users_tweets(
+                id=user_id,
+                max_results=1,
+                tweet_fields=["created_at", "author_id"],
+            )
+            if not resp.data:
+                print(f"[tracked] bootstrap: no existing tweets for @{username}")
+            else:
+                latest = resp.data[0]
+                state.setdefault("tracked_since_ids", {})[str(user_id)] = str(latest.id)
+                save_state(state)
+                print(
+                    f"[tracked] bootstrap: set since_id for @{username} "
+                    f"to {latest.id}, ignoring older tweets"
+                )
+            continue
+
         kwargs = {
             "id": user_id,
             "max_results": 5,
             "tweet_fields": ["created_at", "author_id"],
+            "since_id": since_id,
         }
-        if since_id:
-            kwargs["since_id"] = since_id
 
         resp = client.get_users_tweets(**kwargs)
 
@@ -363,6 +389,26 @@ def main():
         try:
             poll_mentions_throttled(bot_user_id)
             handle_tracked_accounts(tracked_ids)
+        except tweepy.TooManyRequests as e:
+            # Explicit 429 handling with best-effort reset parsing
+            reset_ts = None
+            resp = getattr(e, "response", None)
+            if resp is not None:
+                reset_header = resp.headers.get("x-rate-limit-reset")
+                try:
+                    reset_ts = int(reset_header) if reset_header is not None else None
+                except ValueError:
+                    reset_ts = None
+
+            if reset_ts is not None:
+                now = int(time.time())
+                wait_for = max(reset_ts - now, 60)
+            else:
+                wait_for = 300  # fallback 5 min
+
+            print(f"[rate-limit] 429 TooManyRequests, sleeping for {wait_for} seconds")
+            time.sleep(wait_for)
+            continue
         except Exception as e:
             print("Loop error:", e)
 
